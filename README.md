@@ -5,6 +5,7 @@ R Bootcamp: Group 19
 
 Authors:
 Jan-Hendrik van Lengerich - email jan-hendrik.vanlengerich@stud.hslu.ch
+
 Perez Olusese email - perez.olusese@stud.hslu.ch
 
 # Project Title
