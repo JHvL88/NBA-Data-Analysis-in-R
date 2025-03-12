@@ -4,15 +4,13 @@ Exploratory NBA Data Analysis in R
 R Bootcamp: Group 19
 
 Authors:
-Jan-Hendrik van Lengerich - email jan-hendrik.vanlengerich@stud.hslu.ch
-
-Perez Olusese email - perez.olusese@stud.hslu.ch
+Jan-Hendrik van Lengerich: jan-hendrik.vanlengerich@stud.hslu.ch, Perez Olusese: perez.olusese@stud.hslu.ch
 
 # Project Title
 Dribbling Through Data: Unveiling NBA Secrets with R
 
 # Introduction
-Open the Rmarkdown file in the zipped folder to be able to access the above named project. 
+Open the Rmarkdown file to be able to access the above named project. 
 
 The project is about analysing NBA and city data using Rmarkdown. After learning how to use the R programming language we are required to use the various R functionalties to complete a data analysis and submit the report.
 
