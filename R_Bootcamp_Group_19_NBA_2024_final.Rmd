@@ -1,0 +1,934 @@
+---
+title: 'Dribbling Through Data: Unveiling NBA Secrets with R'
+author: "Perez Olusese, Jan-Hendrik van Lengerich"
+date: "2024-02-23"
+output: html_document
+editor_options:
+  chunk_output_type: console
+---
+
+<style>
+body {
+  font-size: 18px;
+}
+</style>
+
+```{r setup, include=FALSE}
+
+# Load libraries
+require(dplyr)
+require(tidyr)
+require(tinytex)
+library(lubridate)
+library(ggplot2)
+library(reshape2)
+library(knitr)
+library(kableExtra)
+library(tidyverse)
+library(summarytools)
+library(tseries)
+library(forecast)
+library(broom)
+library(leaflet)
+
+
+# Set (change) working directory 
+setwd("C:/Users/R Bootcamp/Assignment/NBA/19_Olusese_van_Lengerich")
+
+# Read the data
+nba_teams <- read.csv("NBA_Team_Stats_Cities.csv")
+us_cities <- read.csv("US_Cities.csv")
+
+# We set the font size, so that the HTML output is readable.
+```
+
+![Title image created by DALL-E](NBA_data_analysis_DALL-E.jpg)
+
+## Introduction
+The National Basketball Association famously known as the NBA is a professional basketball league in North America composed of 30 teams (29 in the United States and 1 in Canada). It is one of the major professional sports leagues in the United States and Canada and is considered the premier professional basketball league in the world. The NBA's regular season runs from October to April, with each team playing 82 games. The league's playoff tournament extends into June.
+
+The NBA has iconic franchises with rich histories, such as the Boston Celtics, Los Angeles Lakers, Chicago Bulls, and San Antonio Spurs, which have all won multiple championships.The NBA has become increasingly international, with players from countries all over the world making significant contributions to the league. Players like Dirk Nowitzki (Germany), Yao Ming (China), and Giannis Antetokounmpo (Greece) have left lasting impacts on the game.
+
+Being fans of the NBA, with "Dribbling Through Data: Unveiling NBA Secrets with R" we embark on a statistical journey through the last quarter of a decade of North America basketball. This paper delves into the the game, analyzing the specific NBA stats and geographical information that have defined the league from 1997 to 2022. Through the lens of rigorous statistical analysis, we may uncover the nuanced dynamics of team success, player efficiency, and the rise of the Western Conference dominance. As we run through the data, the story of the NBA unfolds a story of dominance and the relentless pursuit of excellence. However, this is not just about numbers; it's about the soul of basketball, revealing how the game has transformed and what the future may hold for the world's best basketball league.
+
+## Description of the Data Used
+
+### Data used
+
+Two primary datasets serve as the cornerstone for our analysis. The first data set, 'NBA_Team_Stats_Cities.csv', provides a comprehensive overview of various NBA teams' performance metrics across different seasons. This data set includes detailed statistics such as games played (G), minutes per game (Min), points scored per game (Pts), rebounds per game (Reb), assists per game (Ast), and efficiency ratings (Eff), among others. It also incorporates advanced metrics like defensive efficiency rating (Deff), offering a comprehensive view of team performance on the defensive end.The following R output shows a preview of the structure, dimension and class of the NBA data set.
+
+```{r data_inspection_nba, echo = FALSE}
+
+# Data inspection of NBA teams data
+head(nba_teams)
+dim(nba_teams)
+class(nba_teams)
+```
+
+The second data set, 'US_Cities.csv', contains demographic and geographic information about US cities, which are used to contextualize the NBA teams' data based on their location. It enhances the analysis by linking team performance or player efficiency to factors inherent to their home cities. Particularly, we aim to employ latitude (lat) and longitude (lng) as well as information on States to create static and dynamic heatmaps to contextualize the geographic differences of NBA stats and give the reader the ability to zoom in and out of respective regions. For space reasons, we will not include a preview of the city data (please refer to Rmd file).
+
+```{r data_inspection_city, include = FALSE}
+
+# Data inspection of US cities
+head(us_cities)
+dim(us_cities)
+class(us_cities)
+```
+
+The analysis leverages these data sets to explore various aspects of NBA teams from the season 1997-1998 to 2021-2022. Our approach not only uncovers insights into the performance of teams and players but also examines the broader implications of these findings within the context of their cities.
+
+### Usage of AI tools
+
+In creating "Dribbling Through Data", we also used the capabilities of AI tools for select tasks, notably ChatGPT and its specialized coding tutor GPT to navigate through some of the complexities of R and R Markdown. Most prominently, DALL-E created the cover image of this report. Additionally, these AI tools proved invaluable for when we encountered intricate coding issues. Their expertise allowed us to solve some of the the problematic aspects of our analysis, providing step-by-step guidance and clarifications that enriched our understanding and application of R code. 
+
+In particular, their tutoring extended to creating interactive maps using leaflet(), enhancing our report with dynamic visualizations that bring our data-driven insights to life. This collaboration with AI not only facilitated a smoother analytical process but also enabled us to explore and implement advanced data presentation techniques, making our exploration of NBA data more engaging and accessible and helping us where we got stuck.
+
+## Data Preparation and Manipulation
+
+### Data preparation
+
+We perform a series of data preparation and manipulation tasks on the two data sets.
+
+For the US cities data set:
+
+1. The last two columns of the data set are removed because they are unnecessary for the analysis. This is done by sub-setting all columns except for the last two. 
+2. We then proceeds to de-duplicate the city data. This primarily done to ensure the right cities are linked to the NBA data set because the cities data set may contain multiple entries for each city (possibly representing different administrative divisions). Hence, we group the data by city names, and for each group, it keeps only the first occurrence. This effectively retains the entry for the largest city when cities have the same name.
+3. Lastly, the city column is renamed to City for consistency or to match the naming convention of the NBA data set.
+
+```{r adjust_cities_data, include = FALSE}
+# Drop last two columns of US cities data
+us_cities <- us_cities[, -c((ncol(us_cities)-1):ncol(us_cities))]
+head(us_cities)
+
+# De-duplicate us_cities by City, keeping only the first occurrence (largest cities)
+us_cities_unique <- us_cities %>% 
+  group_by(city) %>% 
+  slice(1) %>% 
+  ungroup()
+
+# Match column names
+us_cities_unique <- rename(us_cities_unique, City = `city`)
+head(us_cities_unique)
+```
+
+For the NBA teams dataset:
+
+1. We split the 'Fgm.a', 'X3gm.a', and 'Ftm.a' columns into two separate columns each. These columns contain concatenated data for made and attempted field goals, three-pointers, and free throws, respectively. The separate() function is used to divide these into individual columns for the number of successful attempts ('Fgm', '3gm', 'Ftm') and the total attempts ('Fga', '3ga', 'Fta').
+2. We also rename the percentage columns for field goals, three-pointers, and free throws from 'Pct', 'Pct.1', and 'Pct.2' to 'Fg.Pct', '3g.Pct', and 'Ft.Pct', respectively, providing a clearer description of what these percentages represent.
+
+These steps are critical in ensuring that the data sets are clean, well-structured, and ready for analysis. They also improve the readability of the data and prepare it for merging or performing statistical analysis .
+
+```{r adjust_nba_teams, include = FALSE}
+# Split the 'Fgm.a', 'X3gm.a', and 'Ftm.a' columns
+nba_teams <- nba_teams %>%
+  separate(col = Fgm.a, into = c("Fgm", "Fga"), sep = "-") %>%
+  separate(col = X3gm.a, into = c("3gm", "3ga"), sep = "-") %>%
+  separate(col = Ftm.a, into = c("Ftm", "Fta"), sep = "-")
+
+# Rename the columns relating to Fg, 3g and Ft percentage
+nba_teams <- nba_teams %>%
+  rename(
+    Fg.Pct = Pct,
+    `3g.Pct` = `Pct.1`,
+    Ft.Pct = `Pct.2`
+  )
+
+head(nba_teams)
+```
+
+### Joining the data sets
+
+Now, we merge the NBA teams' performance data with the unique US cities data using a left join operation. The join is conducted on the 'City' column, which means that the NBA data is matched with the corresponding city information based on the city names. Rows from nba_teams will be retained even if there is no matching entry in us_cities_unique, and the merged data set is stored in 'combined_data'.
+
+```{r joined_data, include = FALSE}
+
+# Join the datasets
+combined_data <- nba_teams %>%
+  left_join(us_cities_unique, by = c("City"))
+
+combined_data <- combined_data %>%
+  mutate(across(c(`Fga`, 
+                  `3ga`, 
+                  `Fta`,
+                  `Fgm`, 
+                  `3gm`, 
+                  `Ftm`,
+                  `Fg.Pct`, 
+                  `3g.Pct`, 
+                  `Ft.Pct`), 
+                ~as.numeric(as.character(.))))
+
+head(combined_data)
+```
+
+```{r average_combined_data, include = FALSE}
+
+# Join the datasets
+avg_combined_data <- combined_data %>%
+  group_by(End) %>%
+  summarise(across(where(is.numeric), mean, na.rm = TRUE))
+
+head(avg_combined_data)
+```
+
+## Overview of the Data
+
+### Overview of data on U.S. cities
+
+The horizontal histogram illustrates the population distribution of cities with NBA teams for the 2021-2022 season. Notably, New York, with a population of 18.9 million, stands as the most populous NBA city, followed by Los Angeles at 11.9 million and Chicago at 8.5 million. These cities not only represent significant urban hubs in the United States but also serve as influential centers for the NBA in terms of fan base, market size, and potential for player recruitment.
+
+```{r us_cities, echo = FALSE, fig.width=10}
+
+# Bar chart displaying population for cities that hosted NBA franchises in 2022
+ggplot(data = combined_data
+       %>% filter(Season == "2021-2022")
+       %>% distinct(City, .keep_all = TRUE),
+       aes(x = reorder(City, population), y = population/1e6)) +   # to get million
+  geom_bar(stat = "identity", fill = "blue") +
+  geom_text(aes(label = sprintf("%.1fM", population / 1e6)),   # Adding population text
+            hjust = -0.2, 
+            size = 2.6) +
+  coord_flip() +               # make it horizontal
+  labs(title = "Population of NBA Cities (Season 2021-2022)",
+       x = NULL,
+       y = "Population in million")
+```
+
+In contrast, cities like New Orleans, Oklahoma City, and Memphis, despite having relatively smaller populations—under 1.5 million—still host NBA teams, showcasing the league's broad geographic and demographic reach. The distribution of populations across NBA cities suggests a wide array of market sizes, from vast metropolises to "smaller" cities, each bringing its unique flavor to the league.
+
+This diversity among NBA city populations may also reflect varying levels of team support, potential revenue streams, and community engagement, factors that could influence team operations and success. This graph serves as a starting point for deeper analysis into how city size correlates with team performance.
+
+### Overview of NBA data
+
+The table ranking NBA teams by titles and runner-up positions underscores the dominance of the West Coast, particularly with teams like the Los Angeles Lakers and the San Antonio Spurs leading in efficiency and championships won. The Lakers' impressive 75% winning percentage from eight finals appearances and the Spurs' 83.33% from six highlight the West Coast's stronghold on NBA titles in recent years.
+
+Moreover, teams achieving a 100% winning percentage in their sole finals appearance, such as the Chicago Bulls, Milwaukee Bucks, and Toronto Raptors, illustrate the significance of seizing opportunities. On the flip side, franchises like Cleveland, with a 20% winning percentage from five finals appearances, showcase the challenges some teams face in clinching the title.
+
+```{r nba_titles, include = FALSE}
+
+# Title counts
+title_counts <- combined_data %>%
+  filter(No == 1) %>%
+  group_by(Team) %>%
+  summarise(Titles = n(), .groups = 'drop') %>%
+  arrange(desc(Titles))
+
+# Runner-up counts
+runner_up_counts <- combined_data %>%
+  filter(No == 2) %>%
+  group_by(Team) %>%
+  summarise(RunnerUps = n(), .groups = 'drop')
+
+# Combine titles and runner-up counts, then calculate totals and winning percentage
+combined_ranks <- title_counts %>%
+  full_join(runner_up_counts, by = "Team") %>%
+  replace_na(list(Titles = 0, RunnerUps = 0)) %>%
+  mutate(TotalFinals = Titles + RunnerUps,
+         WinningPercentage = ifelse(TotalFinals > 0, Titles / TotalFinals, 0)) %>%
+  arrange(desc(Titles), desc(RunnerUps))
+```
+
+```{r table_nba_titles, echo = FALSE, fig.width=10}
+
+# Display the table
+kable(combined_ranks, 
+      caption = "West Coast teams have been dominating the NBA over recent years", 
+      digits = 2, 
+      format = "html", 
+      booktabs = TRUE) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+## Descriptive Statistics
+
+### Description of NBA and city data
+
+The data distributions and descriptive statistics below for the NBA and cities data reveal several insights into the nature of the variables under consideration. The distribution of games shows a peak around the mid-80s, which aligns with the regular NBA season length of 82 games per season, indicating most teams are playing a similar number of games with little variation, as the narrow peak and lower standard deviation suggest. Of course, any number of games beyond 82 indicats that teams have reached the playoffs. Points, rebounds, and assists distributions are more spread out, reflecting the varying strategies and play styles of different teams. The efficiency ratings are also relatively spread, with a slight skew towards higher values, suggesting a tendency towards more efficient gameplay across the league.
+
+```{r plot_descriptive_stats, echo = FALSE, fig.width=10, fig.height=8}
+
+# Facet NBA plot
+ggplot(combined_data %>%
+  select(Games = G,
+         Points = Pts, 
+         Rebounds = Reb, 
+         Assists = Ast, 
+         Efficiency = Eff, 
+         Population = population, 
+         Density = density) %>%
+  pivot_longer(cols = everything(), names_to = "Variable", values_to = "Value")%>%
+  mutate(Variable = factor(Variable, levels = c("Games", "Points", "Rebounds", "Assists", "Efficiency", "Population", "Density"))), 
+       aes(x = Value)) +
+  geom_density(fill = "blue", alpha = 0.5) +
+  facet_wrap(~ Variable, scales = "free") +
+  theme_minimal() +
+  labs(x = NULL, y = "Density") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+Population and density distributions for the cities show a right-skewed pattern, indicating that while there are a few mega cities with very high populations and densities, the majority have comparatively lower values. This skewness is reflected in both the plots and the descriptive statistics, with the mean significantly higher than the median due to the influence of these outlier cities.
+
+```{r, descriptive_stats, include = FALSE}
+
+# Calculate descriptive statistics for selected NBA and city variables
+descriptive_stats <- combined_data %>%
+  select(Games = G, 
+         Points = Pts, 
+         Rebounds = Reb, 
+         Assists = Ast, 
+         Efficiency = Eff, 
+         Population = population, 
+         Density = density) %>%
+  descr(stats = c("mean", "sd", "min", "max", "q1", "q3", "skewness", "kurtosis"),
+        transpose = TRUE)
+
+descriptive_stats <- as.data.frame(descriptive_stats)
+row_order <- c("Games", "Points", "Rebounds", "Assists", "Efficiency", "Population", "Density")
+descriptive_stats <- descriptive_stats[row_order, ]
+```
+
+```{r table_descriptive_stats, echo = FALSE, fig.width = 10}
+
+# Display the table of descriptive stats with thousands separators and limit to two decimal places
+kable(descriptive_stats,
+      caption = "Descriptive Statistics for NBA and Cities Data",
+      digits = 2,
+      format.args = list(big.mark = ",", decimal.mark = '.', scientific = FALSE),
+      align = 'r')
+```
+
+Overall, these statistics paint a picture of a league where there's consistency in the number of games played but variability in performance metrics, hinting at diverse team competencies. The city data suggests a league spread across a wider range, from decently sized cities to some of the world's largest cities. The skewness and kurtosis values in the city data suggest the presence of outlier cities that could potentially have different dynamics compared to the majority, which might influence team revenues and strategies.
+
+### Most successful franchises in recent years
+
+We have selected the three most successful NBA franchises by titles from the seasons 1997-1998 to 2021-2022 to analyze trends in their gameplay statistics. Over the years, the Golden State Warriors, L.A. Lakers, and San Antonio Spurs have not only triumphed in terms of championships but have also showcased distinctive patterns in their points, assists, and rebounds per game. The time series graphs for each franchise reflect the evolution of their playing styles and strategies as they adapt to competitive demands and shifts in the basketball landscape.
+
+```{r plot_top3_pts, echo = FALSE, fig.width=10}
+
+# Plotting points per season for the most successful franchises
+ggplot(data = combined_data %>%
+         filter(Team %in% c("L.A. Lakers", "San Antonio Spurs", "Golden State Warriors")),
+       aes(y = Pts, x = Start, color = Team)) +
+  geom_point(na.rm = TRUE) +
+  geom_line(na.rm = TRUE) +
+  scale_color_manual(values = c("L.A. Lakers" = "purple", 
+                                "San Antonio Spurs" = "grey30", 
+                                "Golden State Warriors" = "blue")) +
+  labs(title = "Points per Game Over Time for the Top 3 NBA Teams",
+       x = NULL, y = "Points per Game")
+```
+
+The points per game over time show that while all three teams have experienced fluctuations, there are periods where they peak, which may correlate with their championship-winning seasons. The Warriors, particularly, show a steep increase in points per game in recent years, corresponding with the rise of their high-scoring offense.
+
+```{r plot_top3_ast, echo = FALSE, fig.width=10}
+
+# Plotting assists per season for the most successful franchises
+ggplot(data = combined_data %>%
+         filter(Team %in% c("L.A. Lakers", "San Antonio Spurs", "Golden State Warriors")),
+       aes(y = Ast, x = Start, color = Team)) +
+  geom_point(na.rm = TRUE) +
+  geom_line(na.rm = TRUE) +
+  scale_color_manual(values = c("L.A. Lakers" = "purple", 
+                                "San Antonio Spurs" = "grey30", 
+                                "Golden State Warriors" = "blue")) +
+  labs(title = "Assists per Game Over Time for the Top 3 NBA Teams",
+       x = NULL, y = "Assists per Game")
+```
+
+In assists per game, the trends illustrate how teamwork and ball movement have been integral to the teams' successes, with the Spurs often leading, highlighting their renowned emphasis on collective play.
+
+```{r plot_top3_reb, echo = FALSE, fig.width=10}
+
+# Plotting rebounds per season for the most successful franchises
+ggplot(data = combined_data %>%
+         filter(Team %in% c("L.A. Lakers", "San Antonio Spurs", "Golden State Warriors")),
+       aes(y = Reb, x = Start, color = Team)) +
+  geom_point(na.rm = TRUE) +
+  geom_line(na.rm = TRUE) +
+  scale_color_manual(values = c("L.A. Lakers" = "purple", 
+                                "San Antonio Spurs" = "grey30", 
+                                "Golden State Warriors" = "blue")) +
+  labs(title = "Rebounds per Game Over Time for the Top 3 NBA Teams",
+       x = NULL, y = "Rebounds per Game")
+```
+
+Rebounds per game are a testament to the teams' defensive efforts and ability to control the ball, with all three franchises showing competitive rebounding numbers. These statistics underscore the multifaceted approach to winning games, where scoring, sharing the ball, and defensive rebounds each play a crucial role in a team's success.
+
+### Franchises that have moved their operations to another city
+
+In the past quarter-century, the NBA has witnessed the relocation of several franchises, a move that often comes with significant changes both on and off the court. The attached visualizations offer a glimpse into two prominent examples: the relocation of the New Jersey Nets to Brooklyn, and the Seattle SuperSonics’ move to Oklahoma City, becoming the Thunder. The field goal percentage and field goals made for these franchises provide quantifiable insights into their performance before and after the move.
+
+```{r plot_jets_nj_brooklyn, echo = FALSE, message = FALSE, fig.width = 10}
+
+# Plotting the change from NJ Nets to Brooklyn Nets
+ggplot(data = combined_data %>%
+         filter(Team %in% c("New Jersey Nets", "Brooklyn Nets")),
+       aes(y = Fg.Pct, x = Start, color = Team)) +
+  geom_point(na.rm = TRUE) +
+  geom_line(na.rm = TRUE) +
+  geom_smooth(se = FALSE) +
+  scale_color_manual(values = c("New Jersey Nets" = "darkblue", 
+                                "Brooklyn Nets" = "grey20")) +
+  labs(title = "FG Percentage for the Nets Franchise Change from NJ to Brooklyn",
+       x = NULL, y = "Field Goal Percentage per Game")
+```
+
+For the Nets, the transition from New Jersey to Brooklyn is marked by a distinct continuation in the team's field goal percentage, as evidenced by the overlap in the timelines of the graphs. The move seems to be a new chapter without disrupting the statistical trend in scoring efficiency, which could be indicative of the franchise's efforts to maintain consistency in team performance. Meanwhile, the Seattle SuperSonics' "metamorphosis" into the Oklahoma City Thunder showcases a more pronounced fluctuation in field goals made per game, potentially reflecting the team's adjustment to new environments and strategies. This variation may also reflect broader shifts in team composition and playing style as the franchise sought to reinvent itself post-relocation.
+
+```{r plot_seattle_oklahoma, echo = FALSE, message = FALSE, fig.width = 10}
+
+# Plotting the change from NJ Nets to Brooklyn Nets
+ggplot(data = combined_data %>%
+         filter(Team %in% c("Seattle SuperSonics", "Oklahoma City Thunder")),
+       aes(y = Fgm, x = Start, color = Team)) +
+  geom_point(na.rm = TRUE) +
+  geom_line(na.rm = TRUE) +
+  geom_smooth(se = FALSE) +
+  scale_color_manual(values = c("Seattle SuperSonics" = "darkgreen", 
+                                "Oklahoma City Thunder" = "orange")) +
+  labs(title = "FG Made for the Franchise Move from Seattle to Oklahoma",
+       x = NULL, y = "Field Goals Made per Game")
+```
+
+These shifts underscore the adaptability and resilience of NBA teams in the face of significant transitions. While relocation can present challenges, it also offers opportunities for teams to redefine their identity and strategic approach. The data suggests that the Nets managed to preserve their on-court performance levels despite the geographical move, while the Thunder's experience is not so clear-cut.
+
+## Data Exploration
+
+### The development of points per game
+
+The below faceted plot showcases individual time series of points per game for each NBA team. The general pattern across most teams shows an increasing trend, especially pronounced in recent years. This pattern is indicative of a league-wide shift towards higher-scoring games. It suggests that individual teams have been adapting their play styles to focus more on offense, or it may reflect broader changes in the game, such as rule modifications that favor offensive plays, improvements in player skills and training methods, or strategic shifts like the increased reliance on three-point shots.
+
+```{r plot_teams_year_facet, echo = FALSE, fig.width = 10, fig.height = 10}
+
+# Plot faceted time series by team of points per game for each season
+ggplot(data = combined_data,
+       mapping = aes(y = Pts,
+                     x = Start)) +
+  geom_line(color = "blue", na.rm = TRUE) +
+  facet_wrap(~ Team, ncol = 4) +
+  labs(y = "Points per game") +
+  theme(axis.title.x = element_blank())
+```
+
+Additionally, the plot below presents an aggregated view of the league’s points per game over time with two fitted regression lines, reinforcing the observation from the individual team plots. The upward slope of the linear regression line confirms that the average number of points scored in NBA games has been increasing over the years. This league-wide increase aligns with the individual team trends and suggests a potentially systematic change in the way basketball is played at the professional level.
+
+```{r plot_points_year, echo = FALSE, message = FALSE, fig.width = 10}
+
+# Plot time series of league points per game for each season and fit regression line
+ggplot(data = avg_combined_data,
+       mapping = aes(y = Pts,
+                     x = Start)) +
+  geom_point(color = "red", na.rm = TRUE) +
+  geom_line(color = "blue", na.rm = TRUE) +
+  geom_smooth(method = "lm", se = FALSE, color = "gray") +
+  geom_smooth(se = FALSE, color = "gray20") +
+  labs(y = "Points per game") +
+  theme(axis.title.x = element_blank())
+```
+
+Considering both plots together, it is evident that the rise in scoring is not confined to a few teams but is a widespread phenomenon affecting the entire NBA. This consistent increase could be making the games more exciting and engaging for fans, potentially contributing to the growing popularity of the league. However, it also implies that teams need to continuously evolve and adapt their strategies both offensively and defensively to remain competitive. Those who can best adjust to this high-scoring environment are likely to gain a strategic advantage, while those who do not may find themselves at a disadvantage.
+
+### Predicting points per game using ARIMA
+
+Now, we would like to dive deeper into points per game and try to predict them for future seasons using an autoregressive moving average time series model, ARIMA. In order to perform an ARIMA model, we first need to test for stationarity using the Augmented Dickey-Fuller (ADF) test.
+
+```{r arima_points_stationarity, include = FALSE}
+
+# Checking stationarity using the Augmented Dickey-Fuller (ADF) test
+adf_points <- adf.test(avg_combined_data$Pts)
+
+# Since time series is not stationary, we perform first differencing
+points_diff_1 <- diff(avg_combined_data$Pts)
+
+# Testing for stationarity of differenced time series using ADF
+adf_points_diff_1 <- adf.test(points_diff_1)
+
+# Since time series is not stationary, we perform second differencing
+points_diff_2 <- diff(points_diff_1)
+
+# Testing for stationarity of second differenced time series using ADF
+adf_points_diff_2 <- adf.test(points_diff_2)
+
+# Since time series is still not stationary, we perform third differencing
+points_diff_3 <- diff(points_diff_2)
+
+# Testing for stationarity of third differenced time series using ADF
+adf_points_diff_3 <- adf.test(points_diff_3)
+```
+
+The table of ADF test results reveals the iterative process undertaken to achieve stationarity in the time series data representing average points per game. Initial tests on the original data and the first two differences did not result in stationarity, as indicated by p-values significantly higher than the common alpha level of 0.05. However, after the third difference, the p-value falls below this threshold, suggesting stationarity has been attained, albeit with reservations.
+
+```{r adf_table_points, echo = FALSE, fig.width = 10}
+
+# Create a data frame with the Dickey-Fuller scores and p-values
+adf_results <- data.frame(
+  Test = c("Original", "1st Difference", "2nd Difference", "3rd Difference"),
+  Dickey_Fuller = c(adf_points$statistic, 
+                    adf_points_diff_1$statistic, 
+                    adf_points_diff_2$statistic, 
+                    adf_points_diff_3$statistic),
+  p_Value = c(adf_points$p.value, 
+              adf_points_diff_1$p.value, 
+              adf_points_diff_2$p.value, 
+              adf_points_diff_3$p.value)
+)
+
+# Display table 
+kable(adf_results,
+      caption = "ADF Test Results for Points Time Series",
+      align = c('l', 'r', 'r'), digits = 4)
+```
+
+While a stationary time series is a prerequisite for ARIMA modeling, the necessity for three differencing operations raises concerns about potential overfitting and loss of meaningful data structure. Over-differencing can render the model sensitive to random fluctuations, thus diminishing its predictive power. This complexity also suggests underlying trends or structural breaks that might not be adequately addressed by a standard ARIMA model, potentially requiring alternative approaches or transformations for a more accurate reflection of the data's properties.
+
+```{r plot_points_diff, echo = FALSE, fig.width = 10}
+
+# plot time series after third differencing
+ggplot(data.frame(Time = 1:length(points_diff_3), 
+                  Points_Diff_3 = as.vector(points_diff_3)),
+       aes(x = Time, y = Points_Diff_3)) +
+  geom_point() +
+  geom_line() +
+  labs(title = "Stationary Data of Points after 3rd Differencing",
+       x = "Number of Seasons",
+       y = "Differenced Points")
+```
+
+Moreover, understanding the nature of the data is crucial; for instance, significant changes within the NBA, such as rule modifications, could have profound effects on game dynamics, which an ARIMA model may not capture. Despite these limitations and the need for caution in interpretation, we will proceed with the ARIMA projection for illustrative purposes, with the understanding that the model's predictive accuracy should be carefully validated against out-of-sample data.
+
+To proceed, we employ the Autocorrelation Function (ACF) and Partial Autocorrelation Function (PACF) to identify appropriate parameters. The  below plots of the third differenced time series have provided insights into the potential parameters for an ARIMA model. The ACF plot displays no significant autocorrelations beyond the initial lag, suggesting that the inclusion of additional MA terms may be unnecessary. Conversely, the PACF plot exhibits a significant negative partial autocorrelation at the first lag, with a sharp decline to non-significant levels for subsequent lags, indicating that an AR term is likely warranted.
+
+```{r calc_afc_pfc, include = FALSE}
+
+# Generate ACF and PACF plots but do not include (autoplot used below)
+acf_diff_3 <- acf(points_diff_3)
+pacf_diff_3 <- pacf(points_diff_3)
+```
+
+```{r plot_afc_pfc, echo = FALSE, fig.width = 10, fig.height = 4}
+
+# Generate ACF and PACF plots using autoplot
+autoplot(acf_diff_3) + 
+  labs(title = "ACF for 3rd Differenced Series")
+
+autoplot(pacf_diff_3) + 
+  labs(title = "PACF for 3rd Differenced Series")
+```
+
+Based on these plots, the proposed ARIMA model parameters for the average points per game time series are set as ARIMA(1,3,0). This denotes an autoregressive term of order 1, indicating reliance on the immediate past value; a differencing order of 3, as determined by the requirement to achieve stationarity; and a moving average term of order 0, suggesting that past forecast errors are not used to predict future values. These parameters will be used to develop the initial ARIMA model.
+
+```{r arima_points, echo = FALSE, fig.width = 10}
+
+# Fit ARIMA model 
+arima_fit <- Arima(avg_combined_data$Pts, order = c(1, 3, 0))
+
+# Forecast the next 2 seasons
+forecast_points <- forecast(arima_fit, h = 2)
+
+autoplot(forecast_points) +
+  labs(x = "Number of Seasons",
+       y = "Points")
+
+# Model diagnostics
+checkresiduals(arima_fit)
+```
+
+The ARIMA(1,3,0) model outputs provide an analysis of the points per game trend in the NBA. The top panel of the graph illustrates the residuals from the model, which do not show any obvious pattern or trend, suggesting that the model has adequately captured the time series data's structure. The ACF plot below the residuals does not indicate any significant autocorrelations, as all bars fall within the confidence interval, which is a good sign that the model residuals are random. The histogram of residuals, with a superimposed normal distribution curve, suggests that the residuals are approximately normally distributed, albeit with some deviations, indicating that the model's assumptions are reasonably met.
+
+The Ljung-Box test, with a p-value of 0.805156, suggests that there is no significant autocorrelation in the residuals at different lag times, which supports the model's adequacy. Interestingly, the forecast plot at the bottom indicates a future decrease in points per game, which diverges from the historical trend of increasing scores. This prediction could suggest that the factors driving previous increases may be reaching a plateau or that defensive strategies and gameplay adjustments are evolving in a way that could lead to lower scoring games. This forecast challenges the notion that scoring will continue to rise indefinitely and may have implications for team strategies and league-wide trends in the coming seasons
+
+### Predicting points per game with exogeneous variables
+
+As we dive even deeper into the multifaceted world of basketball, it becomes imperative to consider various factors that can influence the game's scoring dynamics. The sub-chapter "Predicting Points Per Game with Exogenous Variables" seeks to explore and quantify how different aspects of gameplay and geographical demographics can impact the average points scored per game in the NBA. By incorporating a range of exogenous variables into our predictive models, we aim to uncover the underlying patterns and relationships that transcend the surface level of the scoreboard.
+
+Variables such as 'Assists', 'Turnovers', 'Offensive Rebounds', 'Field Goal Attempts', 'Three-Point Attempts', and 'Free Throw Attempts' provide insights into the direct actions that contribute to game scores. Similarly, efficiency metrics like 'Field Goal Percentage', 'Three-Point Percentage', and 'Free Throw Percentage' offer a measure of player and team performance that correlates with scoring ability. Beyond the court, demographic factors such as 'Population', 'Population Density', and 'Longitude' serve as proxies for the broader social and economic environment that could perhaps indirectly influence the score board. For this, we will start with a faceted scatter plot of various independent variables plotted against 'Points per Game'.
+
+```{r plot_pts_scatter, echo = FALSE, message = FALSE, fig.width=10, fig.height=11}
+
+# Define data for scatter plot
+pts_scatter_data <- combined_data %>%
+  select(Points = Pts,
+         Assists = Ast,
+         Turnovers = To,
+         Offensive_Rebounds = Oreb,
+         Field_Goal_Attempts = Fga,
+         Three_Point_Attempts = `3ga`,
+         Free_Throw_Attempts = Fta,
+         Field_Goal_Percentage = `Fg.Pct`,
+         Three_Point_Percentage = `3g.Pct`,
+         Free_Throw_Percentage = `Ft.Pct`,
+         Population = population,
+         Population_Density = density,
+         Longitude = lng) %>%
+  pivot_longer(cols = -Points, names_to = "Variable", values_to = "Value") %>%
+  mutate(Variable = factor(Variable, levels = c(
+    "Assists",
+    "Turnovers",
+    "Offensive_Rebounds",
+    "Field_Goal_Attempts",
+    "Three_Point_Attempts",
+    "Free_Throw_Attempts",
+    "Field_Goal_Percentage",
+    "Three_Point_Percentage",
+    "Free_Throw_Percentage",
+    "Population",
+    "Population_Density",
+    "Longitude"
+  )))
+
+# Facet scatter plot with Points as dependent variable
+ggplot(pts_scatter_data, 
+       aes(x = Value,
+           y = Points)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE, color = "blue") +
+  facet_wrap(~ Variable, scales = "free_x", ncol = 3) +
+  labs(x = NULL, y = "Points per Game") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+The faceted scatter plots provide a graphical representation of the relationship between points per game and a variety of basketball-related and demographic variables. For basketball-specific metrics, we see a positive relationship with 'Assists', 'Field Goal Attempts', 'Three-Point Attempts', 'Field Goal Percentage', 'Three-Point Percentage', and 'Free Throw Percentage', as indicated by the upward slope of the regression lines. This suggests that as these variables increase, so do the points per game, which is intuitive for 'Field Goal Percentage' and 'Three-Point Percentage', as more efficient shooting would naturally lead to higher scores. Interestingly, 'Turnovers' and 'Offensive Rebounds' show a negative trend, implying that an increase in these variables may be associated with a decrease in points per game. This could suggest that turnovers are detrimental to scoring, while more offensive rebounds might indicate missed scoring opportunities.
+
+When looking at demographic variables such as 'Population' and 'Population Density', the plots do not indicate a clear trend, and the regression lines are relatively flat, suggesting little to no linear relationship with points per game. The 'Longitude' variable also shows no significant trend, indicating that geographic location longitudinally does not have a straightforward impact on scoring. The lack of a strong relationship with these demographic variables could imply that factors like population size and density, as well as geographical location, are not major determinants of the points scored in a game. The subsequent calculation of correlation and regression statistics will provide a more quantitative and detailed assessment of these relationships and help determine the strength and significance of each.
+
+```{r cor_regr_stats, include = FALSE}
+
+# Calculate correlations and linear regressions
+statistics_list <- list()
+
+variables <- c("Ast", "To", "Oreb", "Fga", "3ga", "Fta", "Fg.Pct", "3g.Pct", "Ft.Pct", "population", "density", "lng")
+
+for (var in variables) {
+  # Calculate correlation
+  correlation_test <- cor.test(combined_data$Pts, combined_data[[var]])
+  correlation <- correlation_test$estimate
+  p_value <- correlation_test$p.value
+  
+  # Calculate regression
+  regression <- lm(Pts ~ combined_data[[var]], data = combined_data)
+  regression_summary <- summary(regression)
+  
+  # Extract coefficients
+  coefficients <- regression_summary$coefficients
+  
+  # Create a data frame of statistics
+  statistics <- tibble(
+    Variable = var,
+    Correlation = correlation,
+    P_Value = p_value,
+    Intercept = coefficients[1, "Estimate"],
+    Slope = coefficients[2, "Estimate"],
+    R_Squared = regression_summary$r.squared,
+    F_Statistic = regression_summary$fstatistic[1],
+    Regression_P_Value = coefficients[2, "Pr(>|t|)"]
+  )
+  
+  statistics_list[[var]] <- statistics
+}
+
+# Combine all statistics into one data frame
+all_statistics <- bind_rows(statistics_list)
+```
+
+```{r cor_regr_table, echo = FALSE, fig.width = 10}
+
+# Display table 
+kable(all_statistics,
+      caption = "Correlation Coefficients and Regression Statistics",
+      digits = 3, 
+      format = "html", 
+      booktabs = TRUE) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+The table of correlation coefficients and regression statistics provides valuable insights into the relationship between various basketball-related metrics and points scored per game. Notably, 'Assists' (Ast), 'Field Goal Attempts' (Fga), and 'Three-Point Attempts' (3ga) show strong positive correlations with points per game, as indicated by their correlation coefficients of 0.641, 0.792, and 0.827, respectively. These variables also have significant p-values, suggesting that these relationships are statistically robust. The positive slopes in the regression analysis further confirm that an increase in these variables is associated with an increase in points per game.
+
+In contrast, 'Turnovers' (To) and 'Offensive Rebounds' (Oreb) have negative correlations with points per game, indicating that as these metrics increase, the points per game tend to decrease. This is consistent with basketball theory, as turnovers represent lost scoring opportunities, and offensive rebounds may occur more frequently in games with poorer shooting performance. The variables 'Field Goal Percentage' (Fg.Pct), 'Three-Point Percentage' (3g.Pct), and 'Free Throw Percentage' (Ft.Pct) also show positive correlations, suggesting that not only the quantity but the quality of shots taken is important for scoring.
+
+Population-related variables such as 'Population', 'Population Density', and 'Longitude' (Lng) have very low or no correlation with points per game, and their p-values indicate that these relationships are not statistically significant. Therefore, they are less likely to provide useful predictive power in a model focused on basketball performance metrics.
+
+Based on these findings, 'Assists', 'Field Goal Attempts', 'Three-Point Attempts', 'Field Goal Percentage', 'Three-Point Percentage', and 'Free Throw Percentage' should be considered for inclusion in a predictive model for points per game. 'Turnovers' and 'Offensive Rebounds' could also be included as they show a significant relationship with points scored, albeit in a negative direction. However, 'Population', 'Population Density', and 'Longitude' should not be included in the model as their relationship with points per game is not statistically significant.
+
+The regression table presents the refined analysis of NBA points per game, with an emphasis on the statistically significant variables. The intercept of the model, although theoretically representing the estimated points per game when all other variables are zero, is not practically interpretable due to its negative value. However, it serves as an anchor point for the model.
+
+```{r regression_rerun, echo = FALSE, fig.width = 10}
+
+# Subset the data to include only the significant variables
+significant_data <- combined_data %>%
+  select(Pts, Ast, To, Oreb, Fga, `3ga`, Fg.Pct, `3g.Pct`, Ft.Pct)
+
+# Run the regression model with only the significant variables
+significant_regression_model <- lm(Pts ~ Ast + To + Oreb + Fga + `3ga` + Fg.Pct + `3g.Pct` + Ft.Pct, data = significant_data)
+
+# Tidy the regression results for presentation
+significant_regression <- tidy(significant_regression_model)
+
+# Create the table
+kable(significant_regression, 
+      caption = "Refined Regression Analysis of NBA Points per Game", 
+      digits = 3, 
+      format = "html", 
+      booktabs = TRUE) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+Assists (Ast) show a negative relationship with points per game, which is counter intuitive as assists are generally expected to contribute positively to points scored. This may suggest multicollinearity or that assists are being overshadowed by the effects of other variables in the model. Turnovers (To) and offensive rebounds (Oreb) are positively related to points per game, with turnovers having a particularly strong positive coefficient, indicating that for each additional turnover, a team's points per game are expected to increase by 0.316. This could be a reflection of a fast-paced, high-scoring game style where turnovers are more frequent but do not necessarily impede scoring. Offensive rebounds (Oreb) also show a positive association, suggesting that teams that excel in offensive rebounds tend to have higher points per game, possibly due to additional scoring opportunities.
+
+Field Goal Attempts (Fga) and Three-Point Attempts (3ga) both have a positive effect on points per game, which aligns with the understanding that more attempts can lead to more points. The Field Goal Percentage (Fg.Pct) shows a very significant increase in points per game with a high coefficient, indicating that teams with higher shooting efficiency tend to score more points. Interestingly, the Three-Point Percentage (3g.Pct) is not statistically significant, which could mean that the quality of three-point shots may not be as crucial as their quantity or that the current data does not capture its effect adequately.
+
+Free Throw Percentage (Ft.Pct) also displays a significant positive relationship with points per game, emphasizing the importance of capitalizing on free throws. This detailed statistical breakdown provides actionable insights for teams to focus on specific areas of the game, such as improving field goal efficiency and offensive rebounding, to enhance their overall points per game.
+
+Based on the refined regression analysis, the predicted points per game (PPG) can be represented by the following equation:
+
+$$
+\text{PPG} = -91.392 + (-0.115 \times \text{Ast}) + (0.316 \times \text{To}) + (0.674 \times \text{Oreb}) + (0.675 \times \text{Fga})\\
++ (0.418 \times \text{3ga}) + (216.879 \times \text{Fg.Pct}) + (3.676 \times \text{3g.Pct}) + (24.481 \times \text{Ft.Pct})
+$$
+
+Where:
+- *PPG* is the Points Per Game.
+- *Ast* is the number of Assists per game.
+- *To* is the number of Turnovers per game.
+- *Oreb* is the number of Offensive Rebounds per game.
+- *Fga* is the number of Field Goal Attempts per game.
+- *3ga* is the number of Three-Point Attempts per game.
+- *Fg.Pct* is the Field Goal Percentage.
+- *3g.Pct* is the Three-Point Percentage.
+- *Ft.Pct* is the Free Throw Percentage.
+
+The coefficients in this equation are estimated from the regression model and reflect the average change in PPG associated with a one-unit change in the respective variable, holding all other variables constant.
+
+### The NBA's efficiency rating (EFF)
+
+One of the recent trends in analyzing NBA statistics is the efficiency rating (EFF). The purpose of the EFF is to provide a single, comprehensive metric that encapsulates a team's statistical performance in various aspects of basketball into one number. By adjusting for pace and league average performance, EFF aims to standardize team performance across different team styles and eras. The higher the rating, the better the team.
+
+
+Calculation of NBA efficiency rating:
+
+$$
+EFF = [PTS + REB + AST + STL + BLK - ((FGA - FGM) + (FTA - FRM) + TO)]
+$$
+
+The average EFF over the time horizon examined is `r round(mean(combined_data$Eff), digits = 2)`. The following chart illustrates the average season EFF over the recent years (from season 1997-1998 onwards).
+
+```{r eff_time_series, echo = FALSE, message = FALSE, fig.width = 10}
+
+# Average EFF over time
+ggplot(avg_combined_data, aes(x = End, y = Eff)) +
+  geom_line(color = "darkblue") + 
+  geom_point(color = "darkblue") +
+  geom_smooth(se = FALSE, color = "grey") +
+  labs(title = "Average Efficiency Rating by Season",
+       x = "Season End Year",
+       y = NULL)
+```
+
+The graph depicts a general upward trend in the average efficiency rating (EFF) of NBA teams over the seasons, with a particularly noticeable increase in recent years. The EFF is a comprehensive statistic that incorporates several aspects of a team's performance, including points, rebounds, assists, steals, and blocks, while accounting for negative impacts such as missed field goals, missed free throws, and turnovers.
+
+A rising average EFF suggests that players and teams are becoming more effective and efficient in their play. There are several potential factors that could contribute to this trend, such as skill development, athleticism, pace of play etc.. The trend does not necessarily indicate that the league has become more competitive, as EFF is not a direct measure of competition between teams. However, it does suggest that the level of play might be improving. This improvement can enhance the attractiveness of the league by showcasing a higher quality of basketball.
+
+Additionally, the maps before us unravel an interesting narrative about basketball efficiency across the United States. The point map reveals that high efficiency is not just a big city game; it's spread out nationwide, showing that across the country, there are hotspots where players are making the most of their time on the court. It's intriguing to consider what's behind these high-efficiency areas – perhaps a local culture that emphasizes strong teamwork or communities with excellent training programs.
+
+```{r eff_city_map, echo = FALSE, message = FALSE, fig.width=10}
+
+# Basic point map
+ggplot(combined_data, aes(x = lng, y = lat, color = Eff)) +
+  borders("state", colour = "darkgrey", fill = "white") +  # State borders for context
+  geom_point(alpha = 1, size = 4) +
+  scale_color_viridis_c() +  # Continuous color scale
+  theme_minimal() +
+  labs(title = "Efficiency Rating by Location", color = "Efficiency") +
+  coord_fixed(1.3)
+
+```
+
+The state-level map gives us a bird's-eye view of the average efficiency per state, indicating that some states might have a better overall basketball infrastructure or a higher level of play. This overview could be valuable for identifying broader trends and could help direct resources and attention to states that are both good at and also in need basketball development. Together, these visuals don't just map scores and stats; they highlight a more comprehensive view and where there's room to grow.
+
+```{r eff_state_map on a map, echo = FALSE, fig.width=10}
+
+# Calculate average efficiency by state
+state_efficiency <- combined_data %>%
+  group_by(state_name) %>%
+  summarise(Avg_Eff = mean(Eff, na.rm = TRUE)) %>%
+  ungroup()
+
+# Ensure the state names in the map data are all lowercase
+state_efficiency$state_name <- tolower(state_efficiency$state_name)
+
+# Get US states map data
+us_states <- map_data("state")
+
+# Join the average efficiency data with the US states map data
+efficiency_map <- us_states %>%
+  left_join(state_efficiency, by = c("region" = "state_name"))
+
+# Plot the map with ggplot2
+ggplot(data = efficiency_map, aes(x = long, y = lat, group = group, fill = Avg_Eff)) +
+  geom_polygon(color = "white") +
+  geom_path() + # Add state boundaries
+  scale_fill_viridis_c(name = "Average Efficiency", na.value = "grey90") +
+  theme_minimal() +
+  labs(title = "Average Efficiency Rating by State") +
+  coord_fixed(1.3) # Keep the aspect ratio
+```
+
+### Is the EFF a good predictor of title outcomes?
+
+First, let us examine the end-of-season ranking for each team in relation to the EFF. For this, we look at the following scatter plot.
+
+```{r rank_to_eff, echo = FALSE, message = FALSE, fig.width=10}
+
+# Ranking in relation to EFF
+ggplot(combined_data, aes(x = Eff, y = No)) +
+  geom_point() +  # scatter plot
+  geom_smooth(method = "lm", se = FALSE) +  # regression line
+  scale_y_reverse() +  # Reverse the y-axis so that 1 is at the top and 29 is at the bottom
+  labs(title = "Relationship between Efficiency Rating and Season Ranking",
+       x = "Efficiency Rating",
+       y = "Season Ranking")
+```
+
+The scatter plot and a correlation coefficient of `r round(cor(x = combined_data$Eff, y = combined_data$No), digits = 2)` indicate a moderate negative relationship between efficiency ratings (EFF) and season rankings in the NBA (note that the graph was reversed in order to display the ranking). Higher EFF typically leads to better rankings (lower numerical value), suggesting that efficiency contributes to success but is not the sole factor. Variability in the data points underscores the presence of other influential factors, such as team dynamics and league competitiveness. While efficiency is important and indicative of a team's performance level, the complexities of the game mean that multiple factors must be considered to fully understand season outcomes.
+
+Now let's look at a scatter plot of the number of NBA titles and the associated efficiency rating 'Eff' as well as a regression analysis.
+
+```{r titles_to_eff, echo = FALSE, message = FALSE, fig.width=10}
+
+# Calculate the average efficiency per team in 'combined_data'
+average_efficiency <- combined_data %>%
+  group_by(Team) %>%
+  summarise(Avg_Eff = mean(Eff, na.rm = TRUE)) %>%
+  ungroup()
+
+# Merge this average efficiency with the title counts
+data_by_title <- title_counts %>%
+  inner_join(average_efficiency, by = "Team")
+
+# Create the scatter plot
+ggplot(data_by_title, aes(x = Avg_Eff, y = Titles)) +
+  geom_point() +
+  geom_smooth(method = "lm", color = "blue", se = FALSE) +
+  labs(x = "Average Efficiency Rating", y = "Number of Titles", title = "NBA Titles vs Average Efficiency Rating")
+```
+
+The plot suggest a positive linear relationship and a correlation coefficient of `r round(cor(x = data_by_title$Avg_Eff, y = data_by_title$Titles), digits = 2)`, so we will further explore a regression analysis. The regression analysis conducted on the NBA data reveals a statistically significant relationship between the average efficiency rating of a team and its number of championship titles. The model predicts that with every additional point increase in a team's average efficiency, there is an associated increase of approximately 0.372 titles. This positive coefficient signifies a trend where teams with higher efficiency tend to have more titles, suggesting that efficiency in performance could be a key contributor to a team's championship success. However, the negative intercept is not practically interpretable within the context of basketball, as it's based on an efficiency rating of zero, which is not realistic in the actual sport.
+
+```{r regressioncalc_titles_eff, include = FALSE, fig.width = 10}
+
+# Perform linear regression
+regression_model <- lm(Titles ~ Avg_Eff, data = data_by_title)
+
+# Summary of the regression model
+summary(regression_model)
+
+tidy_regression <- tidy(regression_model)
+```
+
+```{r regression_titles_eff, echo = FALSE, message = FALSE, fig.width = 10}
+
+# Create table of the regression results
+kable(tidy_regression, caption = "Regression Analysis of NBA Titles and Average Efficiency",
+      digits = 3, format = "html") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+The regression equation is:
+$$
+\text{PPG} = -39.689 + 0.372 \times \text{avg Eff}
+$$
+
+While the analysis provides a meaningful insight into the correlation between team efficiency and titles won, it's crucial to acknowledge that this is an association rather than a direct causation. The p-value of 0.026 for the efficiency rating affirms its statistical significance in the model, lending weight to the argument that efficiency is an important factor in a team's success. Yet, it's important to consider other variables not included in this model that could also impact the number of titles, such as team strategy, player experience, or even financial investment. The results thus serve as a quantitative backbone to the qualitative understanding that a team's efficiency on the court is a cornerstone of their championship victories.
+
+## Location Anaylsis (Chapter of Choice)
+
+In this chapter of choice we have worked towards a geographical exploration of the cities that are home to NBA teams, utilizing the interactive capabilities of the leaflet() function in R. This analysis provides us with a visual representation that not only captures the magnitude of the cities' populations but also offers a comparative view of various team statistics, including points, assists, rebounds, and efficiency ratings. Through the employment of leaflet maps, we gain a picture of how population size might go along with the performance metrics of the resident NBA teams.
+
+```{r population_map, echo = FALSE, fig.width = 10}
+
+# Define color palette
+color_palette <- colorNumeric(palette = "viridis", domain = combined_data$population)
+
+leaflet(data = combined_data) %>%
+  addTiles() %>%
+  addCircles(
+    lng = ~lng, lat = ~lat, weight = 1,
+    radius = ~population / 180,
+    color = ~color_palette(population), 
+    fillColor = ~color_palette(population),
+    fillOpacity = 0.3, 
+    popup = ~paste("Population: ", population)
+  ) %>%
+  addLegend(
+    position = "bottomright", 
+    pal = color_palette, 
+    values = ~population,
+    title = "Population",
+    opacity = 1
+  )
+```
+
+The first part of our analysis focuses on the population sizes of the NBA cities, where we can observe the scope and scale of the potential fanbase that supports each team. This interactive map allows us to zoom in and out of each region, giving us insights into the population of these franchises. Following this, we delve into the heart of basketball statistics, overlaying team performance data onto their geographic locations. By visualizing points, assists, rebounds, and efficiency ratings, we display patterns that may or may not suggest the influence of location on team success. These maps serve not just as tools for visual analysis but also as potential deeper narratives about the interplay between city scale, fan engagement, and team performance within the NBA.
+
+```{r, avg_team_stats, include = FALSE}
+
+# Calculate average statistics for each team
+team_averages <- combined_data %>%
+  group_by(Team) %>%
+  summarise(
+    Points = mean(Pts),
+    Assists = mean(Ast),
+    Rebounds = mean(Reb),
+    Efficiency = mean(Eff)
+  ) 
+```
+
+```{r table_avg_team_stats, echo = FALSE, fig.width = 10}
+
+# Display the table
+kable(team_averages, 
+      caption = "Average Team Statistics", 
+      digits = 2, 
+      format = "html") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+Utilize the zoom feature to explore the interactive NBA stats map in greater detail, and click on a city to reveal essential statistics. The size of each bubble on the map is indicative of the team's points scored per game, allowing for a visual comparison across different franchises and locations while different colors of the fill and line of the bubbles gives an indication of their assists and rebounds per game.
+
+```{r nba_stats_map, echo = FALSE, fig.width = 10}
+
+# Define color palettes
+assists_palette <- colorNumeric(palette = "Blues", domain = combined_data$Ast)
+rebounds_palette <- colorNumeric(palette = "Oranges", domain = combined_data$Reb)
+
+# Use leaflet to perform interactive map
+leaflet(data = combined_data) %>%
+  addTiles() %>%
+  addCircles(
+    lng = ~lng, lat = ~lat,
+    radius = ~Pts * 800,  
+    fillColor = ~assists_palette(Ast),
+    color = ~rebounds_palette(Reb), 
+    fillOpacity = 0.4, 
+    opacity = 0.5,  # Border opacity
+    weight = 4,  # Border width
+    popup = ~paste("City: ", City, "<br>Points: ", Pts, "<br>Assists: ", Ast, "<br>Rebounds: ", Reb)
+  ) %>%
+  addLegend(
+    position = "bottomright", 
+    pal = assists_palette, 
+    values = ~Ast,
+    title = "Assists",
+    opacity = 1
+  ) %>%
+  addLegend(
+    position = "bottomleft", 
+    pal = rebounds_palette, 
+    values = ~Reb,
+    title = "Rebounds",
+    opacity = 1
+  )
+```
+
+## Conclusion
+
+Our report "Dribbling Through Data" aims to provide an analysis of NBA teams and performance over a span from 1997-1998 to 2021-2022. It highlights a league-wide trend towards higher-scoring games and more efficient play, with a particular focus on the development of points per game and efficiency ratings. The West has been dominant in terms of championships, underscoring the competitive imbalance between the NBA conferences. Statistical methods, including regression and ARIMA models, were employed to predict future performances and understand the impact of various factors on game outcomes. The analysis suggests that the NBA's play has become more attractive, with improvements in team and player efficiency contributing to the league's growing popularity. The adaptability of teams to strategic and environmental changes, as evidenced by franchise relocations and the evolution of playing styles, also plays a critical role in the NBA landscape.
